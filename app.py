@@ -4,12 +4,13 @@ from PIL import Image
 import io
 import time
 
-# ---------------- CONFIG ----------------
+# ---------------- PAGE CONFIG ----------------
 st.set_page_config(
     page_title="Travel Recommendation Chatbot",
     layout="wide"
 )
 
+# ---------------- SECRETS ----------------
 HF_TOKEN = st.secrets["HF_API_TOKEN"]
 
 VISION_MODEL_API = "https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-large"
@@ -44,11 +45,11 @@ def identify_landmark(image):
             try:
                 return response.json()[0]["generated_text"]
             except:
-                return "Unable to extract landmark description."
+                return "Landmark detected but description unavailable."
 
         time.sleep(5)
 
-    return "Vision model is busy. Please try again."
+    return "Landmark model is busy. Please try again later."
 
 def get_travel_recommendation(prompt):
     payload = {
@@ -75,7 +76,7 @@ def get_travel_recommendation(prompt):
 
         time.sleep(5)
 
-    return "Language model is busy. Please try again."
+    return "Language model is busy. Please try again later."
 
 # ---------------- UI ----------------
 st.title("Travel Recommendation Chatbot")
@@ -87,16 +88,16 @@ col1, col2 = st.columns([1, 2])
 with col1:
     st.subheader("Upload Landmark Image")
     image_file = st.file_uploader(
-        "Upload a landmark image",
+        "Upload an image of a landmark",
         type=["jpg", "jpeg", "png"]
     )
 
     if image_file:
         image = Image.open(image_file)
-        st.image(image, caption="Uploaded Image", width=280)
+        st.image(image, caption="Uploaded Landmark", width=280)
 
         if st.button("Identify Landmark"):
-            with st.spinner("Processing image..."):
+            with st.spinner("Identifying landmark..."):
                 st.session_state.landmark = identify_landmark(image)
                 st.success("Landmark identified")
 
@@ -131,3 +132,11 @@ Conversation:
             context += f"{r}: {m}\n"
 
         with st.chat_message("assistant"):
+            with st.spinner("Generating recommendation..."):
+                answer = get_travel_recommendation(context)
+                st.write(answer)
+
+        st.session_state.chat.append(("assistant", answer))
+
+st.divider()
+st.caption("MACS AIML • Multimodal Transformer Project")
