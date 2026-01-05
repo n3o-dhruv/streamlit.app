@@ -13,7 +13,7 @@ st.set_page_config(
 HF_TOKEN = st.secrets["HF_API_TOKEN"]
 
 VISION_API = "https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-large"
-LLM_API = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2"
+LLM_API = "https://api-inference.huggingface.co/models/google/gemma-2b-it"
 
 HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"}
 
@@ -24,7 +24,7 @@ if "notes_summary" not in st.session_state:
 if "chat" not in st.session_state:
     st.session_state.chat = []
 
-# ---------------- SAFE API FUNCTIONS ----------------
+# ---------------- FUNCTIONS ----------------
 def analyze_notes(image):
     img_bytes = io.BytesIO()
     image.save(img_bytes, format="PNG")
@@ -41,16 +41,19 @@ def analyze_notes(image):
             try:
                 return response.json()[0]["generated_text"]
             except:
-                return "Notes detected but could not be summarized."
+                return "Notes detected but could not extract text."
 
         time.sleep(5)
 
-    return "Notes image model is currently busy. Please try again later."
+    return "Notes image model is currently busy. Please try again."
 
 def generate_study_plan(prompt):
     payload = {
         "inputs": prompt,
-        "parameters": {"max_new_tokens": 350}
+        "parameters": {
+            "max_new_tokens": 350,
+            "temperature": 0.7
+        }
     }
 
     for _ in range(3):
@@ -65,11 +68,11 @@ def generate_study_plan(prompt):
             try:
                 return response.json()[0]["generated_text"]
             except:
-                return "Response generated but parsing failed."
+                return "Response generated but could not be parsed."
 
         time.sleep(5)
 
-    return "Study planner model is currently busy. Please try again later."
+    return "Study planner model is busy. Please try again later."
 
 # ---------------- UI ----------------
 st.title("Smart Study Planner")
@@ -92,7 +95,7 @@ with col1:
         if st.button("Analyze Notes"):
             with st.spinner("Analyzing notes..."):
                 st.session_state.notes_summary = analyze_notes(image)
-                st.success("Notes analyzed successfully")
+                st.success("Notes analyzed")
 
 # ---------------- RIGHT PANEL ----------------
 with col2:
@@ -113,7 +116,7 @@ with col2:
         st.session_state.chat.append(("user", user_input))
 
         context = f"""
-You are an intelligent study planner.
+You are an intelligent academic study planner.
 
 Notes Summary:
 {st.session_state.notes_summary}
