@@ -3,16 +3,17 @@ import requests
 from PIL import Image
 import io
 
-# ---------------- CONFIG ----------------
+# ---------------- PAGE CONFIG ----------------
 st.set_page_config(
     page_title="Travel Recommendation Chatbot",
     layout="wide"
 )
 
+# ---------------- SECRETS ----------------
 HF_TOKEN = st.secrets["HF_API_TOKEN"]
 
-VISION_API = "https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-large"
-LLM_API = "https://api-inference.huggingface.co/models/HuggingFaceH4/zephyr-7b-beta"
+VISION_MODEL_API = "https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-large"
+LLM_MODEL_API = "https://api-inference.huggingface.co/models/google/flan-t5-base"
 
 HEADERS = {
     "Authorization": f"Bearer {HF_TOKEN}",
@@ -32,7 +33,7 @@ def identify_landmark(image):
     image.save(img_bytes, format="PNG")
 
     response = requests.post(
-        VISION_API,
+        VISION_MODEL_API,
         headers={"Authorization": f"Bearer {HF_TOKEN}"},
         data=img_bytes.getvalue(),
         params={"wait_for_model": "true"},
@@ -43,21 +44,21 @@ def identify_landmark(image):
         try:
             return response.json()[0]["generated_text"]
         except:
-            return "Landmark detected but could not be described."
+            return "Landmark detected but description unavailable."
 
-    return "Image model unavailable at the moment."
+    return "Image model temporarily unavailable."
 
 def get_travel_recommendation(prompt):
     payload = {
         "inputs": prompt,
         "parameters": {
-            "max_new_tokens": 300,
-            "temperature": 0.7
+            "max_new_tokens": 120,
+            "temperature": 0.6
         }
     }
 
     response = requests.post(
-        LLM_API,
+        LLM_MODEL_API,
         headers=HEADERS,
         json=payload,
         params={"wait_for_model": "true"},
@@ -70,7 +71,7 @@ def get_travel_recommendation(prompt):
         except:
             return "Response could not be parsed."
 
-    return "Language model unavailable. Please try again."
+    return "Language model temporarily unavailable."
 
 # ---------------- UI ----------------
 st.title("Travel Recommendation Chatbot")
@@ -88,12 +89,12 @@ with col1:
 
     if image_file:
         image = Image.open(image_file)
-        st.image(image, caption="Uploaded Landmark", width=280)
+        st.image(image, caption="Uploaded Landmark Image", width=280)
 
         if st.button("Identify Landmark"):
             with st.spinner("Identifying landmark..."):
                 st.session_state.landmark = identify_landmark(image)
-                st.success("Landmark processed")
+                st.success("Landmark identified")
 
 # ---------------- RIGHT PANEL ----------------
 with col2:
@@ -119,11 +120,11 @@ You are a professional travel guide.
 Landmark:
 {st.session_state.landmark}
 
-Conversation:
-"""
+User Question:
+{user_input}
 
-        for r, m in st.session_state.chat:
-            context += f"{r}: {m}\n"
+Give a concise and helpful travel recommendation.
+"""
 
         with st.chat_message("assistant"):
             with st.spinner("Generating recommendation..."):
