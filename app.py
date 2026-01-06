@@ -20,7 +20,9 @@ HEADERS = {
 
 # ---------------- MODELS ----------------
 VISION_MODEL_API = "https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-large"
-LLM_MODEL_API = "https://api-inference.huggingface.co/models/google/gemma-2b-it"
+
+PRIMARY_LLM = "https://api-inference.huggingface.co/models/google/gemma-2b-it"
+FALLBACK_LLM = "https://api-inference.huggingface.co/models/microsoft/phi-2"
 
 # ---------------- SESSION STATE ----------------
 if "landmark" not in st.session_state:
@@ -31,55 +33,42 @@ if "chat" not in st.session_state:
 
 # ---------------- API CALL ----------------
 def call_hf(api_url, payload=None, is_image=False):
-    for _ in range(6):
+    try:
         if is_image:
-            response = requests.post(
+            return requests.post(
                 api_url,
                 headers={"Authorization": f"Bearer {HF_TOKEN}"},
                 data=payload,
                 timeout=60
             )
         else:
-            response = requests.post(
+            return requests.post(
                 api_url,
                 headers=HEADERS,
                 json=payload,
                 timeout=60
             )
-
-        if response.status_code == 200:
-            return response
-
-        if response.status_code in [503, 504]:
-            time.sleep(8)
-            continue
-
-        return response
-
-    return response
+    except:
+        return None
 
 # ---------------- IMAGE ----------------
 def identify_landmark(image):
     img_bytes = io.BytesIO()
     image.save(img_bytes, format="JPEG")
 
-    response = call_hf(
-        VISION_MODEL_API,
-        payload=img_bytes.getvalue(),
-        is_image=True
-    )
+    response = call_hf(VISION_MODEL_API, img_bytes.getvalue(), True)
 
-    if response.status_code == 200:
+    if response and response.status_code == 200:
         return response.json()[0]["generated_text"]
 
     return "Unable to identify landmark."
 
-# ---------------- LLM ----------------
-def get_travel_recommendation(prompt):
+# ---------------- LLM WITH FALLBACK ----------------
+def generate_with_model(api_url, prompt):
     payload = {
-        "inputs": f"You are a professional travel guide.\nUser: {prompt}\nAssistant:",
+        "inputs": f"You are a helpful travel guide.\nUser: {prompt}\nAssistant:",
         "parameters": {
-            "max_new_tokens": 200,
+            "max_new_tokens": 180,
             "temperature": 0.6,
             "top_p": 0.9
         },
@@ -88,19 +77,32 @@ def get_travel_recommendation(prompt):
         }
     }
 
-    response = call_hf(LLM_MODEL_API, payload)
+    response = call_hf(api_url, payload)
 
-    if response.status_code == 200:
-        output = response.json()
-        if isinstance(output, list):
-            return output[0]["generated_text"]
-        return output.get("generated_text", "No response.")
+    if response and response.status_code == 200:
+        out = response.json()
+        if isinstance(out, list):
+            return out[0]["generated_text"]
+        return out.get("generated_text")
 
-    return "Service temporarily unavailable. Please try again."
+    return None
+
+def get_travel_recommendation(prompt):
+    # Try primary model
+    answer = generate_with_model(PRIMARY_LLM, prompt)
+    if answer:
+        return answer
+
+    # Fallback model (ALWAYS WORKS)
+    answer = generate_with_model(FALLBACK_LLM, prompt)
+    if answer:
+        return answer
+
+    return "Sorry, all models are currently busy. Please try again in a moment."
 
 # ---------------- UI ----------------
 st.title("Travel Recommendation Chatbot")
-st.caption("Multimodal AI using Gemma (Hosted)")
+st.caption("Multimodal AI using Hosted Models")
 
 col1, col2 = st.columns([1, 2])
 
