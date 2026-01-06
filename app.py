@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 from PIL import Image
+import io
 
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(
@@ -9,65 +10,128 @@ st.set_page_config(
 )
 
 # ---------------- SECRETS ----------------
-OPENROUTER_API_KEY = st.secrets["OPENROUTER_API_KEY"]
+HF_TOKEN = st.secrets["HF_API_TOKEN"]
+
+VISION_MODEL_API = "https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-large"
+LLM_MODEL_API = "https://api-inference.huggingface.co/models/google/flan-t5-base"
+
+HEADERS = {
+    "Authorization": f"Bearer {HF_TOKEN}",
+    "Content-Type": "application/json"
+}
 
 # ---------------- SESSION STATE ----------------
+if "landmark" not in st.session_state:
+    st.session_state.landmark = ""
+
 if "chat" not in st.session_state:
     st.session_state.chat = []
 
-# ---------------- OPENROUTER CALL ----------------
-def get_travel_recommendation(prompt):
-    url = "https://openrouter.ai/api/v1/chat/completions"
+# ---------------- FUNCTIONS ----------------
+def identify_landmark(image):
+    img_bytes = io.BytesIO()
+    image.save(img_bytes, format="PNG")
 
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://streamlit.app",
-        "X-Title": "Travel Recommendation Chatbot"
-    }
-
-    payload = {
-        "model": "mistralai/mistral-7b-instruct",
-        "messages": [
-            {"role": "system", "content": "You are a helpful travel guide."},
-            {"role": "user", "content": prompt}
-        ],
-        "max_tokens": 300,
-        "temperature": 0.6
-    }
-
-    response = requests.post(url, headers=headers, json=payload, timeout=60)
+    response = requests.post(
+        VISION_MODEL_API,
+        headers={"Authorization": f"Bearer {HF_TOKEN}"},
+        data=img_bytes.getvalue(),
+        params={"wait_for_model": "true"},
+        timeout=120
+    )
 
     if response.status_code == 200:
-        return response.json()["choices"][0]["message"]["content"]
+        try:
+            return response.json()[0]["generated_text"]
+        except:
+            return "Landmark detected but description unavailable."
 
-    # SHOW REAL ERROR (important for sanity)
-    return f"Error from OpenRouter: {response.status_code} - {response.text}"
+    return "Image model temporarily unavailable."
+
+def get_travel_recommendation(prompt):
+    payload = {
+        "inputs": prompt,
+        "parameters": {
+            "max_new_tokens": 120,
+            "temperature": 0.6
+        }
+    }
+
+    response = requests.post(
+        LLM_MODEL_API,
+        headers=HEADERS,
+        json=payload,
+        params={"wait_for_model": "true"},
+        timeout=120
+    )
+
+    if response.status_code == 200:
+        try:
+            return response.json()[0]["generated_text"]
+        except:
+            return "Response could not be parsed."
+
+    return "Language model temporarily unavailable."
 
 # ---------------- UI ----------------
 st.title("Travel Recommendation Chatbot")
-st.caption("Hosted LLM using OpenRouter (Stable)")
+st.caption("Transformer-based Multimodal AI using Hosted Inference Models")
 
-# Chat history
-for role, msg in st.session_state.chat:
-    with st.chat_message(role):
-        st.write(msg)
+col1, col2 = st.columns([1, 2])
 
-# Input
-user_input = st.chat_input("Ask about travel tips, budget, or attractions...")
+# ---------------- LEFT PANEL ----------------
+with col1:
+    st.subheader("Upload Landmark Image")
+    image_file = st.file_uploader(
+        "Upload an image of a landmark",
+        type=["jpg", "jpeg", "png"]
+    )
 
-if user_input:
-    st.session_state.chat.append(("user", user_input))
+    if image_file:
+        image = Image.open(image_file)
+        st.image(image, caption="Uploaded Landmark Image", width=280)
 
-    with st.chat_message("assistant"):
-        with st.spinner("Generating response..."):
-            answer = get_travel_recommendation(user_input)
-            st.write(answer)
+        if st.button("Identify Landmark"):
+            with st.spinner("Identifying landmark..."):
+                st.session_state.landmark = identify_landmark(image)
+                st.success("Landmark identified")
 
-    st.session_state.chat.append(("assistant", answer))
-    st.rerun()
+# ---------------- RIGHT PANEL ----------------
+with col2:
+    st.subheader("Travel Chatbot")
 
-# Clear
-if st.button("Clear Conversation"):
-    st.session_state.chat = []
-    st.rerun()
+    if st.session_state.landmark:
+        st.markdown(f"**Identified Landmark:** {st.session_state.landmark}")
+
+    for role, msg in st.session_state.chat:
+        with st.chat_message(role):
+            st.write(msg)
+
+    user_input = st.chat_input(
+        "Ask about best time to visit, budget, attractions, or travel tips"
+    )
+
+    if user_input:
+        st.session_state.chat.append(("user", user_input))
+
+        context = f"""
+You are a professional travel guide.
+
+Landmark:
+{st.session_state.landmark}
+
+User Question:
+{user_input}
+
+Give a concise and helpful travel recommendation.
+"""
+
+        with st.chat_message("assistant"):
+            with st.spinner("Generating recommendation..."):
+                answer = get_travel_recommendation(context)
+                st.write(answer)
+
+        st.session_state.chat.append(("assistant", answer))
+
+st.divider()
+st.caption("MACS AIML • Multimodal Transformer Project")
