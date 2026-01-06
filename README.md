@@ -1,1 +1,3 @@
-# streamlit.app
+This project is a Smart Study Planner designed to help students plan their studies in a more effective way. The application allows users to upload images of handwritten or printed notes, which are then analyzed using a hosted vision-language model to extract useful information from the notes. Based on this extracted content and the academic goals provided by the user, the system generates a personalized study plan along with learning and revision strategies.
+
+The entire application is deployed on Streamlit Cloud and uses hosted inference models, so no transformer models are run locally. Token usage is intentionally limited to ensure smooth performance, better reliability, and compatibility with cloud resource constraints. This project demonstrates how multimodal AI can be practically used for academic planning in a scalable and cloud-friendly manner.
