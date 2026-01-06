@@ -5,7 +5,7 @@ import io
 
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(
-    page_title="Travel Recommendation Chatbot",
+    page_title="Smart Study Planner",
     layout="wide"
 )
 
@@ -21,14 +21,14 @@ HEADERS = {
 }
 
 # ---------------- SESSION STATE ----------------
-if "landmark" not in st.session_state:
-    st.session_state.landmark = ""
+if "notes_text" not in st.session_state:
+    st.session_state.notes_text = ""
 
 if "chat" not in st.session_state:
     st.session_state.chat = []
 
 # ---------------- FUNCTIONS ----------------
-def identify_landmark(image):
+def extract_notes(image):
     img_bytes = io.BytesIO()
     image.save(img_bytes, format="PNG")
 
@@ -44,11 +44,11 @@ def identify_landmark(image):
         try:
             return response.json()[0]["generated_text"]
         except:
-            return "Landmark detected but description unavailable."
+            return "Notes detected but could not be read."
 
-    return "Image model temporarily unavailable."
+    return "Notes image model unavailable."
 
-def get_travel_recommendation(prompt):
+def generate_study_plan(prompt):
     payload = {
         "inputs": prompt,
         "parameters": {
@@ -69,66 +69,66 @@ def get_travel_recommendation(prompt):
         try:
             return response.json()[0]["generated_text"]
         except:
-            return "Response could not be parsed."
+            return "Could not generate study plan."
 
-    return "Language model temporarily unavailable."
+    return "Study planner model unavailable."
 
 # ---------------- UI ----------------
-st.title("Travel Recommendation Chatbot")
+st.title("Smart Study Planner")
 st.caption("Transformer-based Multimodal AI using Hosted Inference Models")
 
 col1, col2 = st.columns([1, 2])
 
 # ---------------- LEFT PANEL ----------------
 with col1:
-    st.subheader("Upload Landmark Image")
+    st.subheader("Upload Notes Image")
     image_file = st.file_uploader(
-        "Upload an image of a landmark",
+        "Upload handwritten or printed notes",
         type=["jpg", "jpeg", "png"]
     )
 
     if image_file:
         image = Image.open(image_file)
-        st.image(image, caption="Uploaded Landmark Image", width=280)
+        st.image(image, caption="Uploaded Notes", width=280)
 
-        if st.button("Identify Landmark"):
-            with st.spinner("Identifying landmark..."):
-                st.session_state.landmark = identify_landmark(image)
-                st.success("Landmark identified")
+        if st.button("Analyze Notes"):
+            with st.spinner("Extracting notes..."):
+                st.session_state.notes_text = extract_notes(image)
+                st.success("Notes extracted")
 
 # ---------------- RIGHT PANEL ----------------
 with col2:
-    st.subheader("Travel Chatbot")
+    st.subheader("Study Planner Assistant")
 
-    if st.session_state.landmark:
-        st.markdown(f"**Identified Landmark:** {st.session_state.landmark}")
+    if st.session_state.notes_text:
+        st.markdown(f"**Extracted Notes:** {st.session_state.notes_text}")
 
     for role, msg in st.session_state.chat:
         with st.chat_message(role):
             st.write(msg)
 
     user_input = st.chat_input(
-        "Ask about best time to visit, budget, attractions, or travel tips"
+        "Ask for study plan, goals, revision strategy, or exam preparation"
     )
 
     if user_input:
         st.session_state.chat.append(("user", user_input))
 
-        context = f"""
-You are a professional travel guide.
+        prompt = f"""
+You are an intelligent academic study planner.
 
-Landmark:
-{st.session_state.landmark}
+Notes:
+{st.session_state.notes_text}
 
-User Question:
+Student Goal:
 {user_input}
 
-Give a concise and helpful travel recommendation.
+Create a concise study plan with goals and revision tips.
 """
 
         with st.chat_message("assistant"):
-            with st.spinner("Generating recommendation..."):
-                answer = get_travel_recommendation(context)
+            with st.spinner("Generating study plan..."):
+                answer = generate_study_plan(prompt)
                 st.write(answer)
 
         st.session_state.chat.append(("assistant", answer))
