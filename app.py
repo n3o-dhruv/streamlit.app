@@ -11,15 +11,18 @@ st.set_page_config(
 )
 
 # ---------------- SECRETS & CONFIG ----------------
+# Ensure your HF_API_TOKEN is in .streamlit/secrets.toml
 HF_TOKEN = st.secrets["HF_API_TOKEN"]
 
-# Models
-# BLIP for Image Captioning
+# Stable Model Endpoints
 VISION_MODEL_API = "https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-large"
-# Switching to Llama-3.1 which is highly stable on the API
-LLM_MODEL_API = "https://api-inference.huggingface.co/models/meta-llama/Llama-3.1-8B-Instruct"
+# Zephyr is highly reliable and excellent for travel advice
+LLM_MODEL_API = "https://api-inference.huggingface.co/models/HuggingFaceH4/zephyr-7b-beta"
 
-HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"}
+HEADERS = {
+    "Authorization": f"Bearer {HF_TOKEN}",
+    "Content-Type": "application/json"
+}
 
 # ---------------- SESSION STATE ----------------
 if "landmark" not in st.session_state:
@@ -30,18 +33,23 @@ if "chat" not in st.session_state:
 
 # ---------------- FUNCTIONS ----------------
 def query_hf_api(api_url, payload, is_image=False):
-    """Generic wrapper with retry logic for model loading"""
-    for _ in range(3):
+    """Handles API calls with automatic retries for model loading (503)"""
+    for attempt in range(5):  # Increased retries for stability
         if is_image:
-            response = requests.post(api_url, headers=HEADERS, data=payload)
+            response = requests.post(api_url, headers={"Authorization": f"Bearer {HF_TOKEN}"}, data=payload)
         else:
             response = requests.post(api_url, headers=HEADERS, json=payload)
         
-        # Handle 503 (Model loading)
+        if response.status_code == 200:
+            return response
+        
+        # If model is loading, wait and retry
         if response.status_code == 503:
-            time.sleep(5)
+            wait_time = response.json().get("estimated_time", 10)
+            time.sleep(min(wait_time, 10))
             continue
-        return response
+        else:
+            return response
     return response
 
 def identify_landmark(image):
@@ -54,19 +62,20 @@ def identify_landmark(image):
         try:
             return response.json()[0]["generated_text"]
         except:
-            return "Landmark detected but text could not be parsed."
+            return "Landmark identified but response format unknown."
     
     return f"Vision Error: {response.status_code}"
 
 def get_travel_recommendation(prompt):
-    # Llama-3 format
-    formatted_prompt = f"<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\n{prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
+    # Zephyr prompt format (ChatML-ish)
+    formatted_prompt = f"<|system|>\nYou are a professional travel guide assistant. Give concise and helpful advice.</s>\n<|user|>\n{prompt}</s>\n<|assistant|>\n"
     
     payload = {
         "inputs": formatted_prompt,
         "parameters": {
-            "max_new_tokens": 500,
+            "max_new_tokens": 400,
             "temperature": 0.7,
+            "top_p": 0.95,
             "return_full_text": False
         }
     }
@@ -76,63 +85,73 @@ def get_travel_recommendation(prompt):
     if response.status_code == 200:
         output = response.json()
         if isinstance(output, list) and len(output) > 0:
-            return output[0].get("generated_text", "No response.")
+            return output[0].get("generated_text", "No response received.")
         elif isinstance(output, dict):
-            return output.get("generated_text", "No response.")
+            return output.get("generated_text", "No response received.")
     
-    # Specific message for 410 or other errors
+    # Specific handling for the 410 error to help debugging
     if response.status_code == 410:
-        return "Error 410: This model endpoint is no longer available. Please try a different model."
+        return "The chosen model is currently unavailable on Hugging Face. Please contact the developer to update the model endpoint."
     
-    return f"LLM Error: {response.status_code}. (Check if your API token is correct)."
+    return f"LLM Error: {response.status_code}. The service may be busy."
 
 # ---------------- UI ----------------
 st.title("Travel Recommendation Chatbot")
-st.caption("Transformer-based Multimodal AI")
+st.caption("Transformer-based Multimodal AI using Zephyr-7B")
 
 col1, col2 = st.columns([1, 2])
 
+# ---------------- LEFT PANEL ----------------
 with col1:
     st.subheader("Upload Landmark Image")
-    image_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
+    image_file = st.file_uploader("Upload an image of a landmark", type=["jpg", "jpeg", "png"])
 
     if image_file:
         image = Image.open(image_file)
-        st.image(image, use_container_width=True)
+        st.image(image, caption="Current Upload", use_container_width=True)
 
         if st.button("Identify Landmark"):
-            with st.spinner("Analyzing image..."):
-                st.session_state.landmark = identify_landmark(image)
-                st.success(f"Detected: {st.session_state.landmark}")
+            with st.spinner("Analyzing landmark..."):
+                result = identify_landmark(image)
+                st.session_state.landmark = result
+                st.success(f"Context: {result}")
 
+# ---------------- RIGHT PANEL ----------------
 with col2:
     st.subheader("Travel Chatbot")
 
     if st.session_state.landmark:
-        st.info(f"Context: {st.session_state.landmark}")
+        st.info(f"📍 Talking about: {st.session_state.landmark}")
 
+    # Display Chat
     for role, msg in st.session_state.chat:
         with st.chat_message(role):
             st.write(msg)
 
-    user_input = st.chat_input("Ask for travel tips...")
+    user_input = st.chat_input("Ask about travel tips, budget, or attractions...")
 
     if user_input:
         st.session_state.chat.append(("user", user_input))
         with st.chat_message("user"):
             st.write(user_input)
 
-        # Better prompt engineering
-        full_prompt = (
-            f"You are a helpful travel guide. The user is asking about: {st.session_state.landmark if st.session_state.landmark else 'general travel'}. "
-            f"User question: {user_input}"
-        )
-        
+        # Build prompt with landmark context
+        if st.session_state.landmark:
+            context_prompt = f"The user is looking at a picture of {st.session_state.landmark}. {user_input}"
+        else:
+            context_prompt = user_input
+
         with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                answer = get_travel_recommendation(full_prompt)
+            with st.spinner("Finding recommendations..."):
+                answer = get_travel_recommendation(context_prompt)
                 st.write(answer)
         
         st.session_state.chat.append(("assistant", answer))
+
+# Add a Clear Button
+if st.button("Clear Conversation"):
+    st.session_state.chat = []
+    st.session_state.landmark = ""
+    st.rerun()
 
 st.divider()
