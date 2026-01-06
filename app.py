@@ -2,19 +2,17 @@ import streamlit as st
 import requests
 from PIL import Image
 import io
-import time
 
-# ---------------- PAGE CONFIG ----------------
+# ---------------- CONFIG ----------------
 st.set_page_config(
     page_title="Travel Recommendation Chatbot",
     layout="wide"
 )
 
-# ---------------- SECRETS ----------------
 HF_TOKEN = st.secrets["HF_API_TOKEN"]
 
-VISION_MODEL_API = "https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-large"
-LLM_MODEL_API = "https://api-inference.huggingface.co/models/google/gemma-2b-it"
+VISION_API = "https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-large"
+LLM_API = "https://api-inference.huggingface.co/models/HuggingFaceH4/zephyr-7b-beta"
 
 HEADERS = {
     "Authorization": f"Bearer {HF_TOKEN}",
@@ -33,23 +31,21 @@ def identify_landmark(image):
     img_bytes = io.BytesIO()
     image.save(img_bytes, format="PNG")
 
-    for _ in range(3):
-        response = requests.post(
-            VISION_MODEL_API,
-            headers={"Authorization": f"Bearer {HF_TOKEN}"},
-            data=img_bytes.getvalue(),
-            timeout=60
-        )
+    response = requests.post(
+        VISION_API,
+        headers={"Authorization": f"Bearer {HF_TOKEN}"},
+        data=img_bytes.getvalue(),
+        params={"wait_for_model": "true"},
+        timeout=120
+    )
 
-        if response.status_code == 200:
-            try:
-                return response.json()[0]["generated_text"]
-            except:
-                return "Landmark detected but description unavailable."
+    if response.status_code == 200:
+        try:
+            return response.json()[0]["generated_text"]
+        except:
+            return "Landmark detected but could not be described."
 
-        time.sleep(5)
-
-    return "Landmark model is busy. Please try again later."
+    return "Image model unavailable at the moment."
 
 def get_travel_recommendation(prompt):
     payload = {
@@ -60,23 +56,21 @@ def get_travel_recommendation(prompt):
         }
     }
 
-    for _ in range(3):
-        response = requests.post(
-            LLM_MODEL_API,
-            headers=HEADERS,
-            json=payload,
-            timeout=60
-        )
+    response = requests.post(
+        LLM_API,
+        headers=HEADERS,
+        json=payload,
+        params={"wait_for_model": "true"},
+        timeout=120
+    )
 
-        if response.status_code == 200:
-            try:
-                return response.json()[0]["generated_text"]
-            except:
-                return "Response could not be parsed."
+    if response.status_code == 200:
+        try:
+            return response.json()[0]["generated_text"]
+        except:
+            return "Response could not be parsed."
 
-        time.sleep(5)
-
-    return "Language model is busy. Please try again later."
+    return "Language model unavailable. Please try again."
 
 # ---------------- UI ----------------
 st.title("Travel Recommendation Chatbot")
@@ -99,7 +93,7 @@ with col1:
         if st.button("Identify Landmark"):
             with st.spinner("Identifying landmark..."):
                 st.session_state.landmark = identify_landmark(image)
-                st.success("Landmark identified")
+                st.success("Landmark processed")
 
 # ---------------- RIGHT PANEL ----------------
 with col2:
