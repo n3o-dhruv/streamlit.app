@@ -10,12 +10,12 @@ st.set_page_config(
 )
 
 # ---------------- SECRETS ----------------
-# Ensure HF_API_TOKEN is set in your Streamlit Secrets
+# Ensure your HF_API_TOKEN is correctly set in .streamlit/secrets.toml
 HF_TOKEN = st.secrets["HF_API_TOKEN"]
 
-# Models
+# UPDATED MODELS: flan-t5-base (410 error) replaced with Mistral-7B
 VISION_MODEL_API = "https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-large"
-LLM_MODEL_API = "https://api-inference.huggingface.co/models/google/flan-t5-base"
+LLM_MODEL_API = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.3"
 
 HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"}
 
@@ -27,28 +27,10 @@ if "chat" not in st.session_state:
     st.session_state.chat = []
 
 # ---------------- FUNCTIONS ----------------
-def query_hf_api(api_url, payload):
-    """Generic wrapper to handle HF Inference API requests"""
-    try:
-        response = requests.post(
-            api_url, 
-            headers=HEADERS, 
-            json=payload, 
-            params={"wait_for_model": "true"}, 
-            timeout=120
-        )
-        # Raise an error for bad status codes (4xx, 5xx)
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        st.error(f"API Error: {e}")
-        return None
-
 def extract_notes(image):
     img_bytes = io.BytesIO()
     image.save(img_bytes, format="JPEG")
     
-    # Payload for Vision model (raw bytes)
     try:
         response = requests.post(
             VISION_MODEL_API,
@@ -57,78 +39,83 @@ def extract_notes(image):
             params={"wait_for_model": "true"}
         )
         if response.status_code == 200:
-            return response.json()[0].get("generated_text", "Could not interpret image.")
-    except:
-        pass
-    return "Error contacting vision model."
+            return response.json()[0].get("generated_text", "No text detected.")
+    except Exception as e:
+        return f"Vision Error: {str(e)}"
+    return "Vision model currently unavailable."
 
 def generate_study_plan(user_query):
-    # Constructing a very specific prompt for flan-t5-base
-    context = st.session_state.notes_text if st.session_state.notes_text else "General studies"
+    # Constructing a prompt that Mistral understands
+    context = st.session_state.notes_text if st.session_state.notes_text else "General topics"
     
-    prompt = f"Context: {context}. Task: {user_query}. Provide a short study plan."
+    # Prompt format for Mistral Instruct
+    prompt = f"<s>[INST] Context: {context}\nQuestion: {user_query}\nProvide a concise study plan with 3 key tips. [/INST]"
     
     payload = {
         "inputs": prompt,
         "parameters": {
-            "max_new_tokens": 150,
+            "max_new_tokens": 250,
             "temperature": 0.7,
-            "do_sample": True
+            "return_full_text": False
         }
     }
     
-    result = query_hf_api(LLM_MODEL_API, payload)
-    
-    if result and isinstance(result, list) and len(result) > 0:
-        return result[0].get("generated_text", "No text generated.")
-    return "The study planner model is currently busy. Please try again in a moment."
+    try:
+        response = requests.post(
+            LLM_MODEL_API,
+            headers=HEADERS,
+            json=payload,
+            params={"wait_for_model": "true"}
+        )
+        if response.status_code == 200:
+            result = response.json()
+            return result[0].get("generated_text", "I'm not sure how to answer that.")
+        elif response.status_code == 410:
+            return "Error: This model endpoint is no longer available on HF. Try 'google/gemma-1.1-2b-it'."
+        else:
+            return f"API Error ({response.status_code}): {response.text}"
+    except Exception as e:
+        return f"Connection error: {str(e)}"
 
 # ---------------- UI ----------------
 st.title("Smart Study Planner")
-st.caption("Transformer-based Multimodal AI using Hosted Inference Models")
+st.caption("Multimodal AI Study Assistant")
 
 col1, col2 = st.columns([1, 2])
 
-# ---------------- LEFT PANEL ----------------
 with col1:
-    st.subheader("Upload Notes Image")
-    image_file = st.file_uploader("Upload handwritten or printed notes", type=["jpg", "jpeg", "png"])
+    st.subheader("Upload Notes")
+    image_file = st.file_uploader("Upload notes image", type=["jpg", "jpeg", "png"])
 
     if image_file:
         image = Image.open(image_file)
-        st.image(image, caption="Uploaded Notes", use_container_width=True)
+        st.image(image, use_container_width=True)
 
-        if st.button("Analyze Notes"):
-            with st.spinner("Extracting content..."):
+        if st.button("Analyze Image"):
+            with st.spinner("Reading notes..."):
                 st.session_state.notes_text = extract_notes(image)
                 st.success("Analysis complete!")
 
-# ---------------- RIGHT PANEL ----------------
 with col2:
-    st.subheader("Study Planner Assistant")
+    st.subheader("Study Assistant")
 
     if st.session_state.notes_text:
-        with st.expander("View Extracted Context"):
-            st.write(st.session_state.notes_text)
+        with st.expander("Extracted Context"):
+            st.info(st.session_state.notes_text)
 
-    # Display chat history
+    # Display chat
     for role, msg in st.session_state.chat:
         with st.chat_message(role):
-            st.write(msg)
+            st.markdown(msg)
 
-    # Chat input
-    if user_input := st.chat_input("Ask for a revision strategy or exam tips..."):
-        # Add user message to UI
+    # Input handling
+    if user_input := st.chat_input("How can I help you study?"):
         st.session_state.chat.append(("user", user_input))
         with st.chat_message("user"):
-            st.write(user_input)
+            st.markdown(user_input)
 
-        # Generate and display assistant response
         with st.chat_message("assistant"):
-            with st.spinner("Generating plan..."):
+            with st.spinner("Generating response..."):
                 answer = generate_study_plan(user_input)
-                st.write(answer)
+                st.markdown(answer)
                 st.session_state.chat.append(("assistant", answer))
-
-st.divider()
-st.caption("MACS AIML • Multimodal Transformer Project")
