@@ -1,7 +1,6 @@
 import streamlit as st
 import requests
 from PIL import Image
-import io
 
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(
@@ -13,17 +12,10 @@ st.set_page_config(
 OPENROUTER_API_KEY = st.secrets["OPENROUTER_API_KEY"]
 
 # ---------------- SESSION STATE ----------------
-if "landmark" not in st.session_state:
-    st.session_state.landmark = ""
-
 if "chat" not in st.session_state:
     st.session_state.chat = []
 
-# ---------------- IMAGE (SIMPLE CONTEXT) ----------------
-def identify_landmark(image):
-    return "a famous tourist landmark"
-
-# ---------------- OPENROUTER LLM ----------------
+# ---------------- OPENROUTER CALL ----------------
 def get_travel_recommendation(prompt):
     url = "https://openrouter.ai/api/v1/chat/completions"
 
@@ -35,9 +27,9 @@ def get_travel_recommendation(prompt):
     }
 
     payload = {
-        "model": "google/gemma-2-9b-it",
+        "model": "mistralai/mistral-7b-instruct",
         "messages": [
-            {"role": "system", "content": "You are a professional travel guide."},
+            {"role": "system", "content": "You are a helpful travel guide."},
             {"role": "user", "content": prompt}
         ],
         "max_tokens": 300,
@@ -49,61 +41,33 @@ def get_travel_recommendation(prompt):
     if response.status_code == 200:
         return response.json()["choices"][0]["message"]["content"]
 
-    return "Unable to generate response at the moment."
+    # SHOW REAL ERROR (important for sanity)
+    return f"Error from OpenRouter: {response.status_code} - {response.text}"
 
 # ---------------- UI ----------------
 st.title("Travel Recommendation Chatbot")
-st.caption("Multimodal AI using Hosted Models (OpenRouter)")
+st.caption("Hosted LLM using OpenRouter (Stable)")
 
-col1, col2 = st.columns([1, 2])
+# Chat history
+for role, msg in st.session_state.chat:
+    with st.chat_message(role):
+        st.write(msg)
 
-# -------- LEFT PANEL --------
-with col1:
-    st.subheader("Upload Landmark Image")
-    image_file = st.file_uploader(
-        "Upload an image of a landmark",
-        type=["jpg", "jpeg", "png"]
-    )
-
-    if image_file:
-        image = Image.open(image_file)
-        st.image(image, use_container_width=True)
-
-        if st.button("Identify Landmark"):
-            st.session_state.landmark = identify_landmark(image)
-            st.success(st.session_state.landmark)
-
-# -------- RIGHT PANEL --------
-with col2:
-    st.subheader("Travel Chatbot")
-
-    if st.session_state.landmark:
-        st.info(f"📍 Landmark context: {st.session_state.landmark}")
-
-    for role, msg in st.session_state.chat:
-        with st.chat_message(role):
-            st.write(msg)
-
-# ---------------- CHAT INPUT ----------------
+# Input
 user_input = st.chat_input("Ask about travel tips, budget, or attractions...")
 
 if user_input:
     st.session_state.chat.append(("user", user_input))
 
-    prompt = (
-        f"The user is viewing {st.session_state.landmark}. {user_input}"
-        if st.session_state.landmark
-        else user_input
-    )
-
-    with st.spinner("Generating response..."):
-        answer = get_travel_recommendation(prompt)
+    with st.chat_message("assistant"):
+        with st.spinner("Generating response..."):
+            answer = get_travel_recommendation(user_input)
+            st.write(answer)
 
     st.session_state.chat.append(("assistant", answer))
     st.rerun()
 
-# ---------------- CLEAR ----------------
+# Clear
 if st.button("Clear Conversation"):
     st.session_state.chat = []
-    st.session_state.landmark = ""
     st.rerun()
