@@ -22,90 +22,115 @@ GROQ_KEY = st.secrets["GROQ_API_KEY"]
 # ================= CLIENTS =================
 groq_client = Groq(api_key=GROQ_KEY)
 
-VISION_API = "https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-large"
+# OCR model for timetable text extraction
+VISION_API = "https://api-inference.huggingface.co/models/microsoft/trocr-base-printed"
 HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"}
 
 # ================= SESSION =================
-st.session_state.setdefault("notes", "")
+st.session_state.setdefault("ocr_text", "")
 st.session_state.setdefault("chat", [])
 
-# ================= IMAGE ANALYSIS =================
-def analyze_image(img):
+# ================= OCR FUNCTION =================
+def extract_text_from_image(img):
     try:
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG")
-        buf.seek(0)
+        buffer = io.BytesIO()
+        img.save(buffer, format="PNG")
+        buffer.seek(0)
 
-        res = requests.post(
+        response = requests.post(
             VISION_API,
             headers=HEADERS,
-            data=buf.getvalue(),
+            data=buffer.getvalue(),
             timeout=60
         )
 
-        if res.status_code != 200:
-            return "⚠️ Image model busy. Try again."
+        if response.status_code != 200:
+            return "OCR model is currently busy. Please try again."
 
-        return res.json()[0]["generated_text"]
+        data = response.json()
+        return data.get("generated_text", "No readable text found in image.")
 
     except Exception:
-        return "⚠️ Image analysis failed."
+        return "Failed to extract text due to a network issue."
 
 # ================= STUDY PLAN (GROQ) =================
-def get_study_plan(query):
+def generate_study_plan(timetable_text, user_query):
     try:
         completion = groq_client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[
                 {
                     "role": "system",
-                    "content": "You are an expert academic study planner."
+                    "content": (
+                        "You are an academic planner. "
+                        "You are given OCR-extracted timetable text. "
+                        "Use it to create a realistic and structured study plan."
+                    )
                 },
                 {
                     "role": "user",
-                    "content": f"Create a clear 5-step study plan for:\n{query}"
+                    "content": (
+                        f"OCR Timetable Text:\n{timetable_text}\n\n"
+                        f"User Request:\n{user_query}\n\n"
+                        "Create a clear 5-step personalized study plan."
+                    )
                 }
             ],
-            temperature=0.5,
-            max_tokens=300
+            temperature=0.4,
+            max_tokens=400
         )
 
         return completion.choices[0].message.content
 
     except Exception:
-        return "⚠️ LLM temporarily unavailable. Retry."
+        return "The language model is temporarily unavailable. Please retry."
 
 # ================= LAYOUT =================
 col1, col2 = st.columns([1, 2])
 
+# ---------- LEFT ----------
 with col1:
-    st.subheader("Upload Notes")
-    file = st.file_uploader("Upload Image", type=["jpg", "png", "jpeg"])
+    st.subheader("Upload Timetable Image")
 
-    if file:
-        img = Image.open(file)
-        st.image(img, width=300)
+    uploaded_file = st.file_uploader(
+        "Upload timetable image",
+        type=["png", "jpg", "jpeg"]
+    )
 
-        if st.button("Analyze Notes"):
-            with st.spinner("Analyzing..."):
-                st.session_state.notes = analyze_image(img)
-                st.success("Notes analyzed!")
+    if uploaded_file:
+        image = Image.open(uploaded_file)
+        st.image(image, width=300)
 
+        if st.button("Analyze Timetable"):
+            with st.spinner("Extracting text from image..."):
+                st.session_state.ocr_text = extract_text_from_image(image)
+                st.success("Timetable processed successfully.")
+
+# ---------- RIGHT ----------
 with col2:
     st.subheader("Assistant")
 
-    if st.session_state.notes:
-        st.info(st.session_state.notes)
+    if st.session_state.ocr_text:
+        st.info("Extracted Timetable Text")
+        st.code(st.session_state.ocr_text)
 
     for role, msg in st.session_state.chat:
         with st.chat_message(role):
             st.write(msg)
 
-    if q := st.chat_input("Ask for a study strategy..."):
-        st.session_state.chat.append(("user", q))
+    user_query = st.chat_input("Ask for a study plan")
+
+    if user_query and st.session_state.ocr_text:
+        st.session_state.chat.append(("user", user_query))
 
         with st.chat_message("assistant"):
-            with st.spinner("Generating plan..."):
-                reply = get_study_plan(q)
+            with st.spinner("Generating study plan..."):
+                reply = generate_study_plan(
+                    st.session_state.ocr_text,
+                    user_query
+                )
                 st.write(reply)
                 st.session_state.chat.append(("assistant", reply))
+
+    elif user_query:
+        st.warning("Please upload and analyze a timetable image first.")
