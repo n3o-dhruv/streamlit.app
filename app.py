@@ -4,22 +4,25 @@ from PIL import Image
 import io
 from groq import Groq
 
+# ================= PAGE CONFIG =================
 st.set_page_config(page_title="Smart Study Planner", layout="wide")
 
+# ================= UI =================
 st.title("Smart Study Planner")
 st.caption("Multimodal AI Assistant • MACS AIML")
 
+# ================= SECRETS =================
 if "GROQ_API_KEY" not in st.secrets:
     st.error("GROQ_API_KEY missing in secrets")
     st.stop()
 
 groq_client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
-# ---------------- SESSION ----------------
-st.session_state.setdefault("timetable_text", "")
+# ================= SESSION =================
+st.session_state.setdefault("ocr_text", "")
 st.session_state.setdefault("chat", [])
 
-# ---------------- OPTIONAL OCR ----------------
+# ================= OPTIONAL OCR =================
 def try_ocr(img):
     if "OCR_SPACE_API_KEY" not in st.secrets:
         return ""
@@ -37,7 +40,7 @@ def try_ocr(img):
                 "language": "eng",
                 "isTable": True
             },
-            timeout=25
+            timeout=20
         )
 
         data = r.json()
@@ -49,79 +52,75 @@ def try_ocr(img):
     except Exception:
         return ""
 
-# ---------------- LLM ----------------
-def generate_plan(timetable, query):
+# ================= LLM =================
+def generate_response(context, query):
     completion = groq_client.chat.completions.create(
         model="llama-3.1-8b-instant",
         messages=[
             {
                 "role": "system",
-                "content": "You are an academic study planner."
+                "content": (
+                    "You are a helpful academic assistant. "
+                    "If timetable text is provided, use it. "
+                    "Otherwise answer generally."
+                )
             },
             {
                 "role": "user",
                 "content": (
-                    f"Timetable:\n{timetable}\n\n"
-                    f"Request:\n{query}\n\n"
-                    "Create a clear 5-step personalized study plan."
+                    f"Context (optional timetable text):\n{context}\n\n"
+                    f"User Query:\n{query}"
                 )
             }
         ],
-        temperature=0.4,
+        temperature=0.5,
         max_tokens=400
     )
 
     return completion.choices[0].message.content
 
-# ---------------- UI ----------------
+# ================= LAYOUT =================
 col1, col2 = st.columns([1, 2])
 
+# ---------- LEFT ----------
 with col1:
-    st.subheader("Upload Timetable Image (Optional)")
+    st.subheader("Upload Image (Optional)")
     file = st.file_uploader("Upload image", type=["png", "jpg", "jpeg"])
 
     if file:
         img = Image.open(file)
         st.image(img, width=300)
 
-        if st.button("Try Auto-Extract"):
-            with st.spinner("Trying OCR..."):
+        if st.button("Analyze Image"):
+            with st.spinner("Analyzing image..."):
                 text = try_ocr(img)
                 if text.strip():
-                    st.session_state.timetable_text = text
-                    st.success("Timetable extracted automatically.")
+                    st.session_state.ocr_text = text
+                    st.success("Text extracted from image.")
                 else:
-                    st.warning("OCR failed. Please paste timetable manually.")
+                    st.warning("Could not extract text. You can still chat normally.")
 
-    st.subheader("Or Paste Timetable Text Manually")
-    manual_text = st.text_area(
-        "Paste timetable text here",
-        height=200
-    )
-
-    if st.button("Use This Timetable"):
-        st.session_state.timetable_text = manual_text
-
+# ---------- RIGHT ----------
 with col2:
     st.subheader("Assistant")
 
-    if st.session_state.timetable_text:
-        st.info("Timetable Being Used")
-        st.code(st.session_state.timetable_text)
+    if st.session_state.ocr_text:
+        st.info("Extracted Text (if any)")
+        st.code(st.session_state.ocr_text)
 
     for role, msg in st.session_state.chat:
         with st.chat_message(role):
             st.write(msg)
 
-    q = st.chat_input("Ask for a study plan")
+    q = st.chat_input("Ask anything (study plans, concepts, doubts)")
 
-    if q and st.session_state.timetable_text:
+    if q:
         st.session_state.chat.append(("user", q))
         with st.chat_message("assistant"):
-            with st.spinner("Generating plan..."):
-                reply = generate_plan(st.session_state.timetable_text, q)
+            with st.spinner("Generating response..."):
+                reply = generate_response(
+                    st.session_state.ocr_text,
+                    q
+                )
                 st.write(reply)
                 st.session_state.chat.append(("assistant", reply))
-
-    elif q:
-        st.warning("Provide timetable text first.")
