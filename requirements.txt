@@ -1,3 +1,4 @@
-streamlit
 requests
 pillow
+streamlit==1.52.2
+huggingface-hub==0.20.3
