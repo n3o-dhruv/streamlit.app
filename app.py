@@ -21,10 +21,7 @@ if "HF_API_TOKEN" not in st.secrets:
 HF_TOKEN = st.secrets["HF_API_TOKEN"]
 
 # ================= MODELS =================
-# Vision model (image → text)
 VISION_MODEL = "Salesforce/blip-image-captioning-large"
-
-# Text model (most stable on HF)
 TEXT_MODEL = "mistralai/Mistral-7B-Instruct-v0.2"
 
 # ================= CLIENTS =================
@@ -53,37 +50,34 @@ def analyze_image(img):
         buffer.seek(0)
 
         result = vision_client.image_to_text(buffer)
-        return result.get("generated_text", "⚠️ Could not extract text.")
+        return result["generated_text"]
 
     except Exception:
-        return "⚠️ Vision model busy or network issue. Try again."
+        return "⚠️ Image model busy or network issue."
 
 # ================= STUDY PLAN =================
 def get_study_plan(query):
     prompt = f"""
 You are an expert academic study planner.
-Create a clear and simple 5-step study plan.
+Create a clear, simple 5-step study plan.
 
 Topic:
 {query}
 """
-
     try:
         response = text_client.text_generation(
             prompt,
             max_new_tokens=200,
-            temperature=0.5,
-            top_p=0.9
+            temperature=0.5
         )
         return response
 
     except Exception:
-        return "⚠️ Text model busy or network issue. Please retry."
+        return "⚠️ Text model busy or network issue. Retry."
 
 # ================= LAYOUT =================
 col1, col2 = st.columns([1, 2])
 
-# ---------- LEFT COLUMN ----------
 with col1:
     st.subheader("Upload Notes")
     uploaded_file = st.file_uploader(
@@ -98,9 +92,8 @@ with col1:
         if st.button("Analyze Notes"):
             with st.spinner("Analyzing notes..."):
                 st.session_state.notes = analyze_image(image)
-                st.success("Notes analyzed successfully!")
+                st.success("Notes analyzed!")
 
-# ---------- RIGHT COLUMN ----------
 with col2:
     st.subheader("Assistant")
 
