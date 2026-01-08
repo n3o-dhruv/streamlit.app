@@ -12,46 +12,51 @@ st.title("Smart Study Planner")
 st.caption("Multimodal AI Assistant • MACS AIML")
 
 # ================= SECRETS =================
-if "HF_API_TOKEN" not in st.secrets or "GROQ_API_KEY" not in st.secrets:
+if "GROQ_API_KEY" not in st.secrets or "OCR_SPACE_API_KEY" not in st.secrets:
     st.error("API keys missing in Streamlit Secrets")
     st.stop()
 
-HF_TOKEN = st.secrets["HF_API_TOKEN"]
 GROQ_KEY = st.secrets["GROQ_API_KEY"]
+OCR_KEY = st.secrets["OCR_SPACE_API_KEY"]
 
-# ================= CLIENTS =================
+# ================= CLIENT =================
 groq_client = Groq(api_key=GROQ_KEY)
-
-# OCR model for timetable text extraction
-VISION_API = "https://api-inference.huggingface.co/models/microsoft/trocr-base-printed"
-HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"}
 
 # ================= SESSION =================
 st.session_state.setdefault("ocr_text", "")
 st.session_state.setdefault("chat", [])
 
-# ================= OCR FUNCTION =================
+# ================= OCR (OCR.SPACE) =================
 def extract_text_from_image(img):
     try:
-        buffer = io.BytesIO()
-        img.save(buffer, format="PNG")
-        buffer.seek(0)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        buf.seek(0)
 
         response = requests.post(
-            VISION_API,
-            headers=HEADERS,
-            data=buffer.getvalue(),
+            "https://api.ocr.space/parse/image",
+            files={"file": buf},
+            data={
+                "apikey": OCR_KEY,
+                "language": "eng",
+                "isTable": True
+            },
             timeout=60
         )
 
-        if response.status_code != 200:
-            return "OCR model is currently busy. Please try again."
+        result = response.json()
 
-        data = response.json()
-        return data.get("generated_text", "No readable text found in image.")
+        if result.get("IsErroredOnProcessing"):
+            return "Failed to read timetable from image."
+
+        parsed_results = result.get("ParsedResults")
+        if not parsed_results:
+            return "No readable text found in image."
+
+        return parsed_results[0].get("ParsedText", "")
 
     except Exception:
-        return "Failed to extract text due to a network issue."
+        return "OCR failed due to network error."
 
 # ================= STUDY PLAN (GROQ) =================
 def generate_study_plan(timetable_text, user_query):
@@ -62,15 +67,14 @@ def generate_study_plan(timetable_text, user_query):
                 {
                     "role": "system",
                     "content": (
-                        "You are an academic planner. "
-                        "You are given OCR-extracted timetable text. "
-                        "Use it to create a realistic and structured study plan."
+                        "You are an academic study planner. "
+                        "You will be given timetable text extracted from an image."
                     )
                 },
                 {
                     "role": "user",
                     "content": (
-                        f"OCR Timetable Text:\n{timetable_text}\n\n"
+                        f"Timetable Text:\n{timetable_text}\n\n"
                         f"User Request:\n{user_query}\n\n"
                         "Create a clear 5-step personalized study plan."
                     )
@@ -83,7 +87,7 @@ def generate_study_plan(timetable_text, user_query):
         return completion.choices[0].message.content
 
     except Exception:
-        return "The language model is temporarily unavailable. Please retry."
+        return "Study plan generation failed. Please retry."
 
 # ================= LAYOUT =================
 col1, col2 = st.columns([1, 2])
@@ -102,9 +106,9 @@ with col1:
         st.image(image, width=300)
 
         if st.button("Analyze Timetable"):
-            with st.spinner("Extracting text from image..."):
+            with st.spinner("Extracting timetable text..."):
                 st.session_state.ocr_text = extract_text_from_image(image)
-                st.success("Timetable processed successfully.")
+                st.success("Timetable extracted.")
 
 # ---------- RIGHT ----------
 with col2:
@@ -133,4 +137,4 @@ with col2:
                 st.session_state.chat.append(("assistant", reply))
 
     elif user_query:
-        st.warning("Please upload and analyze a timetable image first.")
+        st.warning("Upload and analyze a timetable image first.")
