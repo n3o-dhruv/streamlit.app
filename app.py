@@ -16,44 +16,41 @@ if "GROQ_API_KEY" not in st.secrets:
     st.error("GROQ_API_KEY missing in secrets")
     st.stop()
 
+if "OCR_SPACE_API_KEY" not in st.secrets:
+    st.error("OCR_SPACE_API_KEY missing in secrets")
+    st.stop()
+
 groq_client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
 # ================= SESSION =================
 st.session_state.setdefault("ocr_text", "")
 st.session_state.setdefault("chat", [])
-st.session_state.setdefault("ocr_debug", "")
 
 # ================= IMAGE PREPROCESS =================
 def preprocess_image(img: Image.Image) -> Image.Image:
-    # convert to RGB (fixes weird modes)
     img = img.convert("RGB")
-
-    # upscale (HUGE improvement for timetable-like docs)
     w, h = img.size
-    scale = 3 if max(w, h) < 1400 else 2  # dynamic scaling
+
+    # upscale for small text docs
+    scale = 3 if max(w, h) < 1600 else 2
     img = img.resize((w * scale, h * scale))
 
-    # grayscale
+    # grayscale + contrast + sharpen
     img = img.convert("L")
-
-    # contrast boost
     img = ImageEnhance.Contrast(img).enhance(2.5)
-
-    # sharpness boost
     img = ImageEnhance.Sharpness(img).enhance(2.0)
 
-    # slight denoise + sharpen
+    # reduce noise slightly
     img = img.filter(ImageFilter.MedianFilter(size=3))
     img = img.filter(ImageFilter.SHARPEN)
 
     return img
 
-# ================= OCR: OCR.SPACE =================
-def ocr_space(img: Image.Image):
-    if "OCR_SPACE_API_KEY" not in st.secrets:
-        return "", "OCR_SPACE_API_KEY missing"
-
+# ================= OCR =================
+def try_ocr(img: Image.Image) -> str:
     try:
+        img = preprocess_image(img)
+
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         buf.seek(0)
@@ -64,68 +61,30 @@ def ocr_space(img: Image.Image):
             data={
                 "apikey": st.secrets["OCR_SPACE_API_KEY"],
                 "language": "eng",
-
-                # IMPORTANT params:
-                "OCREngine": "2",       # better engine
-                "scale": "true",       # auto upscale on server too
-                "isTable": "true",
+                "OCREngine": "2",
+                "scale": "true",
                 "detectOrientation": "true",
-                "filetype": "PNG",
+                "isTable": "true"
             },
-            timeout=45
+            timeout=60
         )
 
         data = r.json()
 
         if data.get("IsErroredOnProcessing"):
-            return "", str(data.get("ErrorMessage"))
+            st.error(f"OCR Error: {data.get('ErrorMessage')}")
+            return ""
 
         parsed = data.get("ParsedResults", [])
         if not parsed:
-            return "", "No ParsedResults received"
+            st.error("OCR returned no ParsedResults")
+            return ""
 
-        text = parsed[0].get("ParsedText", "")
-        return text, ""
+        return parsed[0].get("ParsedText", "").strip()
 
     except Exception as e:
-        return "", f"Exception: {e}"
-
-# ================= OPTIONAL FALLBACK OCR (EASYOCR) =================
-def try_easyocr(img: Image.Image):
-    try:
-        import numpy as np
-        import easyocr
-
-        reader = easyocr.Reader(["en"], gpu=False)
-
-        # easyocr needs numpy image
-        arr = np.array(img)
-        result = reader.readtext(arr, detail=0, paragraph=True)
-
-        return "\n".join(result).strip()
-    except Exception as e:
+        st.error(f"OCR Exception: {e}")
         return ""
-
-# ================= MASTER OCR =================
-def try_ocr(img: Image.Image):
-    pre = preprocess_image(img)
-
-    # show processed image in UI for debugging
-    st.image(pre, caption="Preprocessed image (OCR input)", use_container_width=True)
-
-    # primary OCR: OCR.Space
-    text, err = ocr_space(pre)
-
-    if text and text.strip():
-        return text.strip(), ""
-
-    # fallback OCR: easyocr (optional)
-    fallback = try_easyocr(pre)
-    if fallback:
-        return fallback.strip(), "OCR.Space failed, used EasyOCR fallback."
-
-    # return error
-    return "", err or "OCR failed completely."
 
 # ================= LLM =================
 def generate_response(context, query):
@@ -136,17 +95,13 @@ def generate_response(context, query):
                 "role": "system",
                 "content": (
                     "You are a helpful academic assistant. "
-                    "If timetable text is provided, use it. "
-                    "Otherwise answer generally. "
-                    "If the context contains a timetable, create a structured plan."
+                    "If timetable text is provided, use it to answer. "
+                    "If no timetable is available, answer normally."
                 )
             },
             {
                 "role": "user",
-                "content": (
-                    f"Context (optional timetable text):\n{context}\n\n"
-                    f"User Query:\n{query}"
-                )
+                "content": f"Context:\n{context}\n\nUser Query:\n{query}"
             }
         ],
         temperature=0.4,
@@ -164,29 +119,25 @@ with col1:
 
     if file:
         img = Image.open(file)
-        st.image(img, caption="Original image", use_container_width=True)
+
+        st.image(img, caption="Original image", width=350)
 
         if st.button("Analyze Image"):
-            with st.spinner("Analyzing image (OCR)..."):
-                text, debug = try_ocr(img)
+            with st.spinner("Extracting text (OCR.Space)..."):
+                text = try_ocr(img)
 
+            if text:
                 st.session_state.ocr_text = text
-                st.session_state.ocr_debug = debug
-
-                if text.strip():
-                    st.success("✅ Text extracted from image!")
-                else:
-                    st.warning("❌ Could not extract text. Try clearer image / zoomed screenshot.")
-
-                if debug:
-                    st.info(f"OCR Debug: {debug}")
+                st.success("✅ OCR Done! Text extracted.")
+            else:
+                st.warning("❌ OCR failed. Upload clearer / zoomed image.")
 
 # ---------- RIGHT ----------
 with col2:
     st.subheader("Assistant")
 
     if st.session_state.ocr_text:
-        st.info("Extracted Text (OCR Output)")
+        st.info("Extracted OCR Text")
         st.code(st.session_state.ocr_text)
 
     for role, msg in st.session_state.chat:
