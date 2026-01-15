@@ -1,6 +1,4 @@
-groq
-pillow
+streamlit
 requests
-easyocr
-numpy
-opencv-python-headless
+pillow
+groq
