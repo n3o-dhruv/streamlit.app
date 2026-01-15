@@ -1,4 +1,6 @@
-streamlit
-requests
-pillow
 groq
+pillow
+requests
+easyocr
+numpy
+opencv-python-headless
